@@ -51,7 +51,7 @@ git tag v260617
 git push origin v260617
 ```
 
-The release tag is converted to `FIRMWARE_VERSION=0xYYMMDD`, so the generated firmware file names and embedded firmware version match the release version. Workflow artifacts keep the full build outputs for debugging, while GitHub Releases publish only updater-friendly `.bin` files.
+The release tag is converted to `FIRMWARE_VERSION=0xYYMMDD`, so the generated firmware file names and embedded firmware version match the release version. Workflow artifacts keep the full build outputs for debugging, while GitHub Releases publish a single `Firmware-vYY.MM.DD.zip` containing only updater-friendly `.bin` files.
 
 For HUD ECU Hacker's firmware updater, the workflow also creates updater-friendly `.bin` copies with this naming scheme:
 

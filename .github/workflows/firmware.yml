@@ -71,12 +71,15 @@ jobs:
             # Passing FIRMWARE_VERSION on the make command line overrides the default in GCC_Rules.mk.
             # That value is embedded into filenames, Candlelight version responses, Slcan V output,
             # and the USB bcdDevice year/month field.
+            release_name="v${version:0:2}.${version:2:2}.${version:4:2}"
             echo "make_args=FIRMWARE_VERSION=0x${version}" >> "${GITHUB_OUTPUT}"
             echo "firmware_version=0x${version}" >> "${GITHUB_OUTPUT}"
+            echo "release_zip=Firmware-${release_name}.zip" >> "${GITHUB_OUTPUT}"
           else
             # Non-release builds use the repository default version from GCC_Rules.mk.
             echo "make_args=" >> "${GITHUB_OUTPUT}"
             echo "firmware_version=from GCC_Rules.mk" >> "${GITHUB_OUTPUT}"
+            echo "release_zip=Firmware-${ref_slug}.zip" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Build all firmware variants
@@ -112,8 +115,8 @@ jobs:
           done
 
           # Workflow artifacts keep the original outputs for debugging, but GitHub Releases below
-          # publish only updater-friendly .bin files to keep end-user downloads simple.
-          zip -j "firmware-artifacts/CANable-2.5-firmware-${{ steps.version.outputs.ref_slug }}.zip" updater-firmware/*
+          # publish a single zip containing only updater-friendly .bin files for end users.
+          zip -j "firmware-artifacts/${{ steps.version.outputs.release_zip }}" updater-firmware/*
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -131,8 +134,7 @@ jobs:
         with:
           # Let GitHub create commit/PR release notes between this tag and the previous tag.
           generate_release_notes: true
-          files: |
-            updater-firmware/*
+          files: firmware-artifacts/${{ steps.version.outputs.release_zip }}
           body: |
             Automated firmware release for `${{ github.ref_name }}`.
 
