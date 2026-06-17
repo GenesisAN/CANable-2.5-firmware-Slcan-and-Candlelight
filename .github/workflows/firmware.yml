@@ -1,15 +1,12 @@
 name: Firmware CI
 
-# Build every firmware variant on normal development events.
-# Tags are also handled here because a tag push is the release trigger.
+# Build every firmware variant only for explicit release or manual runs.
+# Normal branch commits do not run CI/CD to avoid expensive firmware builds on every push.
 # Release tags must be named either vYY.MM.DD or vYYMMDD, for example v26.06.17.
 on:
   push:
-    branches:
-      - "**"
     tags:
       - "v*"
-  pull_request:
   workflow_dispatch:
 
 permissions:
