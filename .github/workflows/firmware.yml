@@ -1,0 +1,112 @@
+name: Firmware CI
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build firmware
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ARM GCC
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: "13.2.Rel1"
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y make zip
+
+      - name: Derive firmware version
+        id: version
+        shell: bash
+        run: |
+          ref_slug="$(printf '%s' "${GITHUB_REF_NAME}" | tr -c 'A-Za-z0-9._-' '-')"
+          echo "ref_slug=${ref_slug}" >> "${GITHUB_OUTPUT}"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            version="${version//./}"
+
+            if [[ ! "${version}" =~ ^[0-9]{6}$ ]]; then
+              echo "Release tags must use vYY.MM.DD or vYYMMDD, got ${GITHUB_REF_NAME}" >&2
+              exit 1
+            fi
+
+            month="${version:2:2}"
+            day="${version:4:2}"
+            if (( 10#${month} < 1 || 10#${month} > 12 || 10#${day} < 1 || 10#${day} > 31 )); then
+              echo "Release tag date must use a valid YY.MM.DD value, got ${GITHUB_REF_NAME}" >&2
+              exit 1
+            fi
+
+            echo "make_args=FIRMWARE_VERSION=0x${version}" >> "${GITHUB_OUTPUT}"
+            echo "firmware_version=0x${version}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "make_args=" >> "${GITHUB_OUTPUT}"
+            echo "firmware_version=from GCC_Rules.mk" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Build all firmware variants
+        shell: bash
+        run: |
+          rm -rf Build_STM* firmware-artifacts updater-firmware
+          mkdir -p firmware-artifacts updater-firmware
+
+          for makefile in Make_*; do
+            echo "Building ${makefile}"
+            make -s -f "${makefile}" ${{ steps.version.outputs.make_args }}
+          done
+
+          find Build_STM* -type f \
+            \( -name "*.bin" -o -name "*.hex" -o -name "*.elf" -o -name "*.map" \) \
+            -exec cp {} firmware-artifacts/ \;
+
+          for bin_file in firmware-artifacts/*.bin; do
+            file_name="$(basename "${bin_file}")"
+            if [[ "${file_name}" =~ ^(STM32G[0-9A-Z]+)_([A-Za-z]+2\.5)_([^_]+)_0x[0-9A-Fa-f]+\.bin$ ]]; then
+              updater_name="${BASH_REMATCH[1]} - ${BASH_REMATCH[2]} - ${BASH_REMATCH[3]}.bin"
+              cp "${bin_file}" "updater-firmware/${updater_name}"
+            else
+              echo "Unexpected firmware file name: ${file_name}" >&2
+              exit 1
+            fi
+          done
+
+          zip -j "firmware-artifacts/CANable-2.5-firmware-${{ steps.version.outputs.ref_slug }}.zip" firmware-artifacts/* updater-firmware/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ steps.version.outputs.ref_slug }}
+          path: |
+            firmware-artifacts/*
+            updater-firmware/*
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            firmware-artifacts/*
+            updater-firmware/*
+          body: |
+            Automated firmware release for `${{ github.ref_name }}`.
+
+            Firmware version: `${{ steps.version.outputs.firmware_version }}`
+            Built from commit: `${{ github.sha }}`

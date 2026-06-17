@@ -1,0 +1,8 @@
+Build_STM*/
+firmware-artifacts/
+updater-firmware/
+*.o
+*.elf
+*.hex
+*.bin
+*.map

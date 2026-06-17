@@ -32,3 +32,45 @@ Latest Updates:
 You find the version history here:
 
 https://netcult.ch/elmue/CANable%20Firmware%20Update#Source_Code
+
+## CI/CD firmware releases
+
+GitHub Actions builds all `Make_*` firmware variants automatically on every push, pull request, and manual workflow run.
+
+To publish a versioned firmware release, create and push a tag in one of these formats:
+
+```sh
+git tag v26.06.17
+git push origin v26.06.17
+```
+
+or:
+
+```sh
+git tag v260617
+git push origin v260617
+```
+
+The release tag is converted to `FIRMWARE_VERSION=0xYYMMDD`, so the generated firmware file names and embedded firmware version match the release version. The workflow uploads `.bin`, `.hex`, `.elf`, `.map`, and a combined `.zip` file to the GitHub Release.
+
+For HUD ECU Hacker's firmware updater, the workflow also creates updater-friendly `.bin` copies with this naming scheme:
+
+```text
+<MCU> - <FirmwareType>2.5 - <Board>.bin
+```
+
+Example:
+
+```text
+STM32G431 - Candlelight2.5 - WeActStudioV2.bin
+```
+
+Copy these `.bin` files into `C:\Program Files (x86)\HUD ECU Hacker\Driver\CANable Firmware Update\Firmware`. The Firmware Updater converts them automatically into `.dfu` files.
+
+The project embeds this version through `GCC_Rules.mk`:
+
+- `BUILD_TRUNK` adds the version to generated firmware file names.
+- `-DFIRMWARE_VERSION_BCD=$(FIRMWARE_VERSION)` passes the version into C code.
+- Candlelight returns the full version through `GS_ReqGetDeviceVersion`.
+- Slcan returns the full version in the `V` command response.
+- USB `bcdDevice` stores the year and month portion because that field is only 16-bit BCD.
