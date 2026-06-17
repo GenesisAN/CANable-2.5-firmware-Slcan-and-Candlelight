@@ -1,5 +1,8 @@
 name: Firmware CI
 
+# Build every firmware variant on normal development events.
+# Tags are also handled here because a tag push is the release trigger.
+# Release tags must be named either vYY.MM.DD or vYYMMDD, for example v26.06.17.
 on:
   push:
     branches:
@@ -12,11 +15,17 @@ on:
 permissions:
   contents: read
 
+env:
+  # GitHub is migrating JavaScript actions from Node.js 20 to Node.js 24.
+  # Opt in now to avoid Node.js 20 deprecation warnings and catch compatibility issues early.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     name: Build firmware
     runs-on: ubuntu-latest
     permissions:
+      # Required only for the tag-release step. Non-tag builds still just upload workflow artifacts.
       contents: write
 
     steps:
@@ -35,10 +44,13 @@ jobs:
         id: version
         shell: bash
         run: |
+          # Artifact and zip names cannot safely use raw branch names because they may contain '/'.
           ref_slug="$(printf '%s' "${GITHUB_REF_NAME}" | tr -c 'A-Za-z0-9._-' '-')"
           echo "ref_slug=${ref_slug}" >> "${GITHUB_OUTPUT}"
 
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            # Convert release tags to the BCD-style firmware version expected by GCC_Rules.mk.
+            # Examples: v26.06.17 -> 0x260617, v260617 -> 0x260617.
             version="${GITHUB_REF_NAME#v}"
             version="${version//./}"
 
@@ -47,6 +59,8 @@ jobs:
               exit 1
             fi
 
+            # Keep the validation simple and deterministic in shell. This catches accidental typos
+            # while preserving the project's YYMMDD versioning scheme.
             month="${version:2:2}"
             day="${version:4:2}"
             if (( 10#${month} < 1 || 10#${month} > 12 || 10#${day} < 1 || 10#${day} > 31 )); then
@@ -54,9 +68,13 @@ jobs:
               exit 1
             fi
 
+            # Passing FIRMWARE_VERSION on the make command line overrides the default in GCC_Rules.mk.
+            # That value is embedded into filenames, Candlelight version responses, Slcan V output,
+            # and the USB bcdDevice year/month field.
             echo "make_args=FIRMWARE_VERSION=0x${version}" >> "${GITHUB_OUTPUT}"
             echo "firmware_version=0x${version}" >> "${GITHUB_OUTPUT}"
           else
+            # Non-release builds use the repository default version from GCC_Rules.mk.
             echo "make_args=" >> "${GITHUB_OUTPUT}"
             echo "firmware_version=from GCC_Rules.mk" >> "${GITHUB_OUTPUT}"
           fi
@@ -67,15 +85,21 @@ jobs:
           rm -rf Build_STM* firmware-artifacts updater-firmware
           mkdir -p firmware-artifacts updater-firmware
 
+          # Each Make_* file describes one board/MCU/firmware combination.
           for makefile in Make_*; do
             echo "Building ${makefile}"
             make -s -f "${makefile}" ${{ steps.version.outputs.make_args }}
           done
 
+          # Keep the original versioned build outputs for traceability and debugging.
           find Build_STM* -type f \
             \( -name "*.bin" -o -name "*.hex" -o -name "*.elf" -o -name "*.map" \) \
             -exec cp {} firmware-artifacts/ \;
 
+          # HUD ECU Hacker's Firmware Updater expects user-friendly firmware names and converts
+          # copied .bin files into .dfu files itself. Do not fake .dfu files here; publish .bin
+          # copies using the updater naming convention instead:
+          #   STM32G431 - Candlelight2.5 - WeActStudioV2.bin
           for bin_file in firmware-artifacts/*.bin; do
             file_name="$(basename "${bin_file}")"
             if [[ "${file_name}" =~ ^(STM32G[0-9A-Z]+)_([A-Za-z]+2\.5)_([^_]+)_0x[0-9A-Fa-f]+\.bin$ ]]; then
@@ -87,7 +111,9 @@ jobs:
             fi
           done
 
-          zip -j "firmware-artifacts/CANable-2.5-firmware-${{ steps.version.outputs.ref_slug }}.zip" firmware-artifacts/* updater-firmware/*
+          # Workflow artifacts keep the original outputs for debugging, but GitHub Releases below
+          # publish only updater-friendly .bin files to keep end-user downloads simple.
+          zip -j "firmware-artifacts/CANable-2.5-firmware-${{ steps.version.outputs.ref_slug }}.zip" updater-firmware/*
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -99,11 +125,13 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub release
+        # Tag builds are official firmware releases. Branch and PR builds only publish workflow artifacts.
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
+          # Let GitHub create commit/PR release notes between this tag and the previous tag.
+          generate_release_notes: true
           files: |
-            firmware-artifacts/*
             updater-firmware/*
           body: |
             Automated firmware release for `${{ github.ref_name }}`.
